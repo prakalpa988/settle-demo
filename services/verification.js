@@ -25,6 +25,7 @@ async function isValidPayment(txHash) {
       transaction: txHash,
     });
     const tx = response.result;
+    console.log("DEBUG raw tx response:", JSON.stringify(tx, null, 2)); // temporary debug line
 
     const checks = {
       isPayment: tx.TransactionType === "Payment",
