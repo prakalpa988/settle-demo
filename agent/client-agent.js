@@ -11,6 +11,14 @@ function selectFreelancer(freelancers) {
   return scored[0];
 }
 
+// SAFEGUARD: enforced independently of the agent's own decision logic
+function enforceSpendingCap(amount) {
+  if (amount > BUDGET) {
+    throw new Error(`Blocked: ${amount} exceeds hard spending cap of ${BUDGET}`);
+  }
+  console.log(`→ Safeguard check passed: ${amount} is within hard cap of ${BUDGET}`);
+}
+
 async function lockEscrow(client, clientWallet, freelancerAddress, amountXRP) {
   const finishAfter = xrpl.isoTimeToRippleTime(new Date(Date.now() + 30 * 1000));
   const tx = {
@@ -63,6 +71,8 @@ async function run() {
 
   const freelancers = await (await fetch("http://localhost:4000/freelancers")).json();
   const chosen = selectFreelancer(freelancers);
+
+  enforceSpendingCap(chosen.rate); // safeguard runs BEFORE any money moves
 
   const sequence = await lockEscrow(client, clientWallet, freelancerWallet.address, "10");
 
