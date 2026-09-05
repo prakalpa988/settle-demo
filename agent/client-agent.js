@@ -117,7 +117,9 @@ async function run() {
       if (!verifyRes.ok) {
         throw new Error(`Verification service returned status ${verifyRes.status}`);
       }
-      ({ pass, checks } = await verifyRes.json());
+      const body = await verifyRes.json();
+      console.log("DEBUG status:", verifyRes.status, "DEBUG body:", JSON.stringify(body, null, 2));
+      ({ pass, checks } = body);
     } catch (err) {
       throw new Error(`Could not reach verification service (is it running on port 4001?): ${err.message}`);
     }
