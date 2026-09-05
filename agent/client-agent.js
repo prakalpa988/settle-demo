@@ -4,6 +4,9 @@ const { generateCondition } = require("./condition");
 
 const BUDGET = 150;
 
+// Toggle for live demo: `node agent/client-agent.js fail` to show rejection
+const DEMO_MODE = process.argv[2] === "fail" ? "fail" : "pass";
+
 function selectFreelancer(freelancers) {
   const affordable = freelancers.filter(f => f.rate <= BUDGET);
   if (affordable.length === 0) {
@@ -74,6 +77,7 @@ async function run() {
 
   try {
     await client.connect();
+    console.log(`\n=== Running in "${DEMO_MODE}" mode ===\n`);
 
     const clientWallet = xrpl.Wallet.fromSeed(process.env.CLIENT_SEED);
     const freelancerWallet = xrpl.Wallet.fromSeed(process.env.FREELANCER_SEED);
@@ -87,7 +91,12 @@ async function run() {
 
     const sequence = await lockEscrow(client, clientWallet, freelancerWallet.address, chosen.rate.toString(), condition);
 
-    const fileContent = "<html><nav>menu</nav><footer>copyright</footer><title>Test</title></html>";
+    // The actual toggle: swap which "delivered work" the freelancer submitted
+    const fileContent =
+      DEMO_MODE === "fail"
+        ? "<html><footer>copyright</footer><title>Test</title></html>" // missing <nav>
+        : "<html><nav>menu</nav><footer>copyright</footer><title>Test</title></html>";
+
     const proofHash = await payForVerification(client, clientWallet, process.env.VERIFIER_ADDRESS, "0.5");
 
     console.log("Waiting for escrow window...");
@@ -98,10 +107,11 @@ async function run() {
       headers: { "Content-Type": "application/json", "x-payment-proof": proofHash },
       body: JSON.stringify({ fileContent }),
     });
-    const body = await verifyRes.json();
-    console.log("DEBUG status:", verifyRes.status, "DEBUG body:", JSON.stringify(body, null, 2));
-    const { pass, checks } = body;
-    console.log("→ Verification result:", checks);
+    const { pass, checks } = await verifyRes.json();
+
+    const passedCount = checks.filter(c => c.pass).length;
+    console.log(`→ Verification: ${pass ? "PASSED" : "FAILED"} (${passedCount}/${checks.length} checks)`);
+    checks.forEach(c => console.log(`   ${c.pass ? "✓" : "✗"} ${c.name}`));
 
     if (pass) {
       await releaseEscrow(client, freelancerWallet, clientWallet.address, sequence, condition, fulfillmentHex);

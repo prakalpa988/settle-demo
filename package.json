@@ -21,6 +21,7 @@
   "dependencies": {
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "five-bells-condition": "^5.0.1",
     "xrpl": "^5.1.0"
   }
 }

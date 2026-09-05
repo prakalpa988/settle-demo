@@ -8,7 +8,6 @@ const PRICE_XRP = "0.5";
 const PRICE_DROPS = xrpl.xrpToDrops(PRICE_XRP);
 const PAY_TO_ADDRESS = process.env.VERIFIER_ADDRESS;
 
-// Tracks proofs already spent, so the same payment can't be replayed for free repeat checks
 const usedProofs = new Set();
 
 async function isValidPayment(txHash) {
@@ -25,14 +24,15 @@ async function isValidPayment(txHash) {
       transaction: txHash,
     });
     const tx = response.result;
-    console.log("DEBUG raw tx response:", JSON.stringify(tx, null, 2)); // temporary debug line
+    const txData = tx.tx_json || tx;
+    const rawAmount = txData.Amount ?? txData.DeliverMax;
 
     const checks = {
-      isPayment: tx.TransactionType === "Payment",
+      isPayment: txData.TransactionType === "Payment",
       isValidated: tx.validated === true,
       succeeded: tx.meta && tx.meta.TransactionResult === "tesSUCCESS",
-      correctDestination: tx.Destination === PAY_TO_ADDRESS,
-      correctAmount: typeof tx.Amount === "string" && BigInt(tx.Amount) >= BigInt(PRICE_DROPS),
+      correctDestination: txData.Destination === PAY_TO_ADDRESS,
+      correctAmount: rawAmount != null && BigInt(rawAmount) >= BigInt(PRICE_DROPS),
     };
 
     const allGood = Object.values(checks).every(Boolean);
