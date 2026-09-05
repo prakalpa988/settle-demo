@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SettleAgent — Autonomous XRPL & x402 Escrow Dashboard</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --accent: #38bdf8;
+            --accent-success: #22c55e;
+            --accent-fail: #ef4444;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --border: #334155;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 24px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 24px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .badge {
+            background-color: #0284c7;
+            color: white;
+            font-size: 0.75rem;
+            padding: 4px 8px;
+            border-radius: 9999px;
+            font-weight: 600;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--text-main);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .btn {
+            background-color: var(--accent);
+            color: #0f172a;
+            font-weight: 600;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+        }
+
+        .btn-fail {
+            background-color: var(--accent-fail);
+            color: white;
+        }
+
+        .log-box {
+            background-color: #090d16;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            height: 320px;
+            overflow-y: auto;
+            color: var(--text-muted);
+        }
+
+        .log-entry {
+            margin-bottom: 8px;
+            line-height: 1.4;
+        }
+
+        .log-entry.info { color: var(--accent); }
+        .log-entry.success { color: var(--accent-success); }
+        .log-entry.fail { color: var(--accent-fail); }
+
+        .stat-group {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .stat-card {
+            background-color: #090d16;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            font-size: 1rem;
+            font-weight: 600;
+            font-family: monospace;
+            word-break: break-all;
+        }
+
+        .status-pill {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            background-color: var(--border);
+            color: var(--text-muted);
+        }
+
+        .status-pill.active {
+            background-color: #065f46;
+            color: #34d399;
+        }
+
+        .status-pill.failed {
+            background-color: #991b1b;
+            color: #fca5a5;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>SettleAgent <span class="badge">XRPL + x402</span></h1>
+        <div id="connection-status" class="status-pill">Ready</div>
+    </header>
+
+    <div class="grid">
+        <!-- Control & Action Panel -->
+        <div class="card">
+            <div class="card-title">Job Execution Controls</div>
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 20px;">
+                Execute an autonomous verification cycle. The client agent selects a freelancer, locks funds in native XRPL Escrow via SHA-256 condition, evaluates delivered code, and unlocks payment over x402 headers.
+            </p>
+
+            <div style="display: flex; gap: 12px; margin-bottom: 24px;">
+                <button class="btn" onclick="runJob(true)">Run Job (Valid Deliverable)</button>
+                <button class="btn btn-fail" onclick="runJob(false)">Run Job (Invalid Deliverable)</button>
+            </div>
+
+            <div class="card-title">Escrow State</div>
+            <div class="stat-group">
+                <div class="stat-card">
+                    <div class="stat-label">Selected Freelancer</div>
+                    <div class="stat-value" id="freelancer-name">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Locked Amount</div>
+                    <div class="stat-value" id="locked-amount">0 XRP</div>
+                </div>
+                <div class="stat-card" style="grid-column: span 2;">
+                    <div class="stat-label">SHA-256 Lock Condition</div>
+                    <div class="stat-value" id="escrow-condition" style="font-size: 0.8rem;">—</div>
+                </div>
+                <div class="stat-card" style="grid-column: span 2;">
+                    <div class="stat-label">x402 Release Pre-image (Secret)</div>
+                    <div class="stat-value" id="x402-preimage" style="font-size: 0.8rem; color: var(--accent-success);">—</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Audit & Logs Panel -->
+        <div class="card">
+            <div class="card-title">
+                Autonomous Verification Logs
+                <span id="job-status" class="status-pill">Idle</span>
+            </div>
+            <div class="log-box" id="log-container">
+                <div class="log-entry">[System] Initialized. Awaiting job trigger...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function log(message, type = 'default') {
+        const container = document.getElementById('log-container');
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${type}`;
+        const time = new Date().toLocaleTimeString();
+        entry.innerText = `[${time}] ${message}`;
+        container.appendChild(entry);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    async function runJob(isValidSubmission) {
+        // Reset UI
+        document.getElementById('job-status').className = 'status-pill active';
+        document.getElementById('job-status').innerText = 'Processing';
+        document.getElementById('freelancer-name').innerText = 'Searching...';
+        document.getElementById('locked-amount').innerText = '10 XRP';
+        document.getElementById('escrow-condition').innerText = 'Generating...';
+        document.getElementById('x402-preimage').innerText = 'Locked';
+
+        log(`Initiating job workflow (Deliverable mode: ${isValidSubmission ? 'VALID' : 'INVALID'})...`, 'info');
+
+        try {
+            // Step 1: Request backend agent execution
+            const response = await fetch('/api/run-agent', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ valid: isValidSubmission })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) throw new Error(data.error || 'Agent execution failed');
+
+            // Update UI with details
+            document.getElementById('freelancer-name').innerText = data.freelancer || 'Agent-Alpha';
+            document.getElementById('escrow-condition').innerText = data.condition || 'A1B2C3D4...';
+
+            log(`Selected Agent: ${data.freelancer}`, 'info');
+            log(`XRPL EscrowCreated Tx Hash: ${data.escrowTxHash}`, 'info');
+            log(`Evaluating submission against inspection criteria...`, 'info');
+
+            if (data.verificationPassed) {
+                log(`Verification PASSED: Code meets DOM structural requirements.`, 'success');
+                log(`x402 Header Auth: Pre-image revealed to freelancer.`, 'success');
+                log(`XRPL EscrowFinish Tx Hash: ${data.finishTxHash}`, 'success');
+
+                document.getElementById('x402-preimage').innerText = data.preimage;
+                document.getElementById('job-status').className = 'status-pill active';
+                document.getElementById('job-status').innerText = 'Settled';
+            } else {
+                log(`Verification FAILED: Submission missing required structural elements.`, 'fail');
+                log(`x402 Pre-image withheld. Escrow remains locked until expiration.`, 'fail');
+
+                document.getElementById('x402-preimage').innerText = '[WITHHELD]';
+                document.getElementById('job-status').className = 'status-pill failed';
+                document.getElementById('job-status').innerText = 'Failed Inspection';
+            }
+
+        } catch (err) {
+            log(`Error: ${err.message}`, 'fail');
+            document.getElementById('job-status').className = 'status-pill failed';
+            document.getElementById('job-status').innerText = 'Error';
+        }
+    }
+</script>
+
+</body>
+</html>
