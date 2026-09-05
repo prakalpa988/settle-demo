@@ -1,5 +1,6 @@
 require("dotenv").config();
 const xrpl = require("xrpl");
+const { generateCondition } = require("./condition");
 
 const BUDGET = 150;
 
@@ -19,7 +20,7 @@ function enforceSpendingCap(amount) {
   console.log(`→ Safeguard check passed: ${amount} is within hard cap of ${BUDGET}`);
 }
 
-async function lockEscrow(client, clientWallet, freelancerAddress, amountXRP) {
+async function lockEscrow(client, clientWallet, freelancerAddress, amountXRP, condition) {
   const finishAfter = xrpl.isoTimeToRippleTime(new Date(Date.now() + 30 * 1000));
   const tx = {
     TransactionType: "EscrowCreate",
@@ -27,11 +28,12 @@ async function lockEscrow(client, clientWallet, freelancerAddress, amountXRP) {
     Destination: freelancerAddress,
     Amount: xrpl.xrpToDrops(amountXRP),
     FinishAfter: finishAfter,
+    Condition: condition, // <-- funds now cryptographically locked to this condition
   };
   const prepared = await client.autofill(tx);
   const signed = clientWallet.sign(prepared);
   const result = await client.submitAndWait(signed.tx_blob);
-  console.log("→ Escrow locked:", result.result.hash);
+  console.log("→ Escrow locked (condition-gated):", result.result.hash);
   return prepared.Sequence;
 }
 
@@ -49,17 +51,20 @@ async function payForVerification(client, clientWallet, verifierAddress, amountX
   return result.result.hash;
 }
 
-async function releaseEscrow(client, freelancerWallet, ownerAddress, offerSequence) {
+async function releaseEscrow(client, freelancerWallet, ownerAddress, offerSequence, condition, fulfillmentHex) {
   const tx = {
     TransactionType: "EscrowFinish",
     Account: freelancerWallet.address,
     Owner: ownerAddress,
     OfferSequence: offerSequence,
+    Condition: condition,
+    Fulfillment: fulfillmentHex,
   };
   const prepared = await client.autofill(tx);
+  prepared.Fee = "1000"; // conditional EscrowFinish needs a slightly higher fee than a plain tx
   const signed = freelancerWallet.sign(prepared);
   const result = await client.submitAndWait(signed.tx_blob);
-  console.log("→ Escrow released, freelancer paid:", result.result.hash);
+  console.log("→ Escrow released via fulfillment, freelancer paid:", result.result.hash);
 }
 
 async function run() {
@@ -72,12 +77,16 @@ async function run() {
   const freelancers = await (await fetch("http://localhost:4000/freelancers")).json();
   const chosen = selectFreelancer(freelancers);
 
-  enforceSpendingCap(chosen.rate); // safeguard runs BEFORE any money moves
+  enforceSpendingCap(chosen.rate);
 
-  const sequence = await lockEscrow(client, clientWallet, freelancerWallet.address, "10");
+  // Generate the secret BEFORE locking funds. Nobody — not even the freelancer,
+  // who holds their own private key — can release this escrow without it.
+  const { condition, fulfillmentHex } = generateCondition();
+  console.log("→ Condition committed on-ledger:", condition);
+
+  const sequence = await lockEscrow(client, clientWallet, freelancerWallet.address, "10", condition);
 
   const fileContent = "<html><nav>menu</nav><footer>copyright</footer><title>Test</title></html>";
-
   const proofHash = await payForVerification(client, clientWallet, process.env.VERIFIER_ADDRESS, "0.5");
 
   console.log("Waiting for escrow window...");
@@ -92,10 +101,11 @@ async function run() {
   console.log("→ Verification result:", checks);
 
   if (pass) {
-    await releaseEscrow(client, freelancerWallet, clientWallet.address, sequence);
+    // Only now, because verification passed, do we use the fulfillment to unlock funds.
+    await releaseEscrow(client, freelancerWallet, clientWallet.address, sequence, condition, fulfillmentHex);
     console.log("✅ Job complete, freelancer paid.");
   } else {
-    console.log("❌ Verification failed — escrow remains locked.");
+    console.log("❌ Verification failed — escrow remains locked. Fulfillment was never revealed.");
   }
 
   await client.disconnect();
