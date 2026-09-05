@@ -6,13 +6,15 @@ const BUDGET = 150;
 
 function selectFreelancer(freelancers) {
   const affordable = freelancers.filter(f => f.rate <= BUDGET);
+  if (affordable.length === 0) {
+    throw new Error("No freelancers available within budget.");
+  }
   const scored = affordable.map(f => ({ ...f, score: f.reliability / f.rate }));
   scored.sort((a, b) => b.score - a.score);
   console.log(`→ Chose ${scored[0].name} (best reliability-per-dollar among affordable options)`);
   return scored[0];
 }
 
-// SAFEGUARD: enforced independently of the agent's own decision logic
 function enforceSpendingCap(amount) {
   if (amount > BUDGET) {
     throw new Error(`Blocked: ${amount} exceeds hard spending cap of ${BUDGET}`);
@@ -28,7 +30,7 @@ async function lockEscrow(client, clientWallet, freelancerAddress, amountXRP, co
     Destination: freelancerAddress,
     Amount: xrpl.xrpToDrops(amountXRP),
     FinishAfter: finishAfter,
-    Condition: condition, // <-- funds now cryptographically locked to this condition
+    Condition: condition,
   };
   const prepared = await client.autofill(tx);
   const signed = clientWallet.sign(prepared);
@@ -61,7 +63,7 @@ async function releaseEscrow(client, freelancerWallet, ownerAddress, offerSequen
     Fulfillment: fulfillmentHex,
   };
   const prepared = await client.autofill(tx);
-  prepared.Fee = "1000"; // conditional EscrowFinish needs a slightly higher fee than a plain tx
+  prepared.Fee = "1000";
   const signed = freelancerWallet.sign(prepared);
   const result = await client.submitAndWait(signed.tx_blob);
   console.log("→ Escrow released via fulfillment, freelancer paid:", result.result.hash);
@@ -69,46 +71,70 @@ async function releaseEscrow(client, freelancerWallet, ownerAddress, offerSequen
 
 async function run() {
   const client = new xrpl.Client("wss://s.altnet.rippletest.net:51233");
-  await client.connect();
 
-  const clientWallet = xrpl.Wallet.fromSeed(process.env.CLIENT_SEED);
-  const freelancerWallet = xrpl.Wallet.fromSeed(process.env.FREELANCER_SEED);
+  try {
+    await client.connect();
 
-  const freelancers = await (await fetch("http://localhost:4000/freelancers")).json();
-  const chosen = selectFreelancer(freelancers);
+    const clientWallet = xrpl.Wallet.fromSeed(process.env.CLIENT_SEED);
+    const freelancerWallet = xrpl.Wallet.fromSeed(process.env.FREELANCER_SEED);
 
-  enforceSpendingCap(chosen.rate);
+    let freelancers;
+    try {
+      const res = await fetch("http://localhost:4000/freelancers");
+      freelancers = await res.json();
+    } catch (err) {
+      throw new Error(`Could not reach freelancer pool service (is it running on port 4000?): ${err.message}`);
+    }
 
-  // Generate the secret BEFORE locking funds. Nobody — not even the freelancer,
-  // who holds their own private key — can release this escrow without it.
-  const { condition, fulfillmentHex } = generateCondition();
-  console.log("→ Condition committed on-ledger:", condition);
+    const chosen = selectFreelancer(freelancers);
+    enforceSpendingCap(chosen.rate);
 
-  const sequence = await lockEscrow(client, clientWallet, freelancerWallet.address, "10", condition);
+    const { condition, fulfillmentHex } = generateCondition();
+    console.log("→ Condition committed on-ledger:", condition);
 
-  const fileContent = "<html><nav>menu</nav><footer>copyright</footer><title>Test</title></html>";
-  const proofHash = await payForVerification(client, clientWallet, process.env.VERIFIER_ADDRESS, "0.5");
+    // Escrow amount now matches the freelancer actually chosen, instead of a hardcoded value
+    const sequence = await lockEscrow(client, clientWallet, freelancerWallet.address, chosen.rate.toString(), condition);
 
-  console.log("Waiting for escrow window...");
-  await new Promise(r => setTimeout(r, 35000));
+    const fileContent = "<html><nav>menu</nav><footer>copyright</footer><title>Test</title></html>";
 
-  const verifyRes = await fetch("http://localhost:4001/verify", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-payment-proof": proofHash },
-    body: JSON.stringify({ fileContent }),
-  });
-  const { pass, checks } = await verifyRes.json();
-  console.log("→ Verification result:", checks);
+    let proofHash;
+    try {
+      proofHash = await payForVerification(client, clientWallet, process.env.VERIFIER_ADDRESS, "0.5");
+    } catch (err) {
+      throw new Error(`Payment to verification service failed: ${err.message}`);
+    }
 
-  if (pass) {
-    // Only now, because verification passed, do we use the fulfillment to unlock funds.
-    await releaseEscrow(client, freelancerWallet, clientWallet.address, sequence, condition, fulfillmentHex);
-    console.log("✅ Job complete, freelancer paid.");
-  } else {
-    console.log("❌ Verification failed — escrow remains locked. Fulfillment was never revealed.");
+    console.log("Waiting for escrow window...");
+    await new Promise(r => setTimeout(r, 35000));
+
+    let pass, checks;
+    try {
+      const verifyRes = await fetch("http://localhost:4001/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-payment-proof": proofHash },
+        body: JSON.stringify({ fileContent }),
+      });
+      if (!verifyRes.ok) {
+        throw new Error(`Verification service returned status ${verifyRes.status}`);
+      }
+      ({ pass, checks } = await verifyRes.json());
+    } catch (err) {
+      throw new Error(`Could not reach verification service (is it running on port 4001?): ${err.message}`);
+    }
+
+    console.log("→ Verification result:", checks);
+
+    if (pass) {
+      await releaseEscrow(client, freelancerWallet, clientWallet.address, sequence, condition, fulfillmentHex);
+      console.log("✅ Job complete, freelancer paid.");
+    } else {
+      console.log("❌ Verification failed — escrow remains locked. Fulfillment was never revealed.");
+    }
+  } catch (err) {
+    console.error("🛑 Job failed:", err.message);
+  } finally {
+    await client.disconnect();
   }
-
-  await client.disconnect();
 }
 
 run();
