@@ -78,52 +78,29 @@ async function run() {
     const clientWallet = xrpl.Wallet.fromSeed(process.env.CLIENT_SEED);
     const freelancerWallet = xrpl.Wallet.fromSeed(process.env.FREELANCER_SEED);
 
-    let freelancers;
-    try {
-      const res = await fetch("http://localhost:4000/freelancers");
-      freelancers = await res.json();
-    } catch (err) {
-      throw new Error(`Could not reach freelancer pool service (is it running on port 4000?): ${err.message}`);
-    }
-
+    const freelancers = await (await fetch("http://localhost:4000/freelancers")).json();
     const chosen = selectFreelancer(freelancers);
     enforceSpendingCap(chosen.rate);
 
     const { condition, fulfillmentHex } = generateCondition();
     console.log("→ Condition committed on-ledger:", condition);
 
-    // Escrow amount now matches the freelancer actually chosen, instead of a hardcoded value
     const sequence = await lockEscrow(client, clientWallet, freelancerWallet.address, chosen.rate.toString(), condition);
 
     const fileContent = "<html><nav>menu</nav><footer>copyright</footer><title>Test</title></html>";
-
-    let proofHash;
-    try {
-      proofHash = await payForVerification(client, clientWallet, process.env.VERIFIER_ADDRESS, "0.5");
-    } catch (err) {
-      throw new Error(`Payment to verification service failed: ${err.message}`);
-    }
+    const proofHash = await payForVerification(client, clientWallet, process.env.VERIFIER_ADDRESS, "0.5");
 
     console.log("Waiting for escrow window...");
     await new Promise(r => setTimeout(r, 35000));
 
-    let pass, checks;
-    try {
-      const verifyRes = await fetch("http://localhost:4001/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-payment-proof": proofHash },
-        body: JSON.stringify({ fileContent }),
-      });
-      if (!verifyRes.ok) {
-        throw new Error(`Verification service returned status ${verifyRes.status}`);
-      }
-      const body = await verifyRes.json();
-      console.log("DEBUG status:", verifyRes.status, "DEBUG body:", JSON.stringify(body, null, 2));
-      ({ pass, checks } = body);
-    } catch (err) {
-      throw new Error(`Could not reach verification service (is it running on port 4001?): ${err.message}`);
-    }
-
+    const verifyRes = await fetch("http://localhost:4001/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-payment-proof": proofHash },
+      body: JSON.stringify({ fileContent }),
+    });
+    const body = await verifyRes.json();
+    console.log("DEBUG status:", verifyRes.status, "DEBUG body:", JSON.stringify(body, null, 2));
+    const { pass, checks } = body;
     console.log("→ Verification result:", checks);
 
     if (pass) {
