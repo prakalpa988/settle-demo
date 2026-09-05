@@ -1,11 +1,10 @@
 require("dotenv").config();
+const fs = require("fs");
+const path = require("path");
 const xrpl = require("xrpl");
 const { generateCondition } = require("./condition");
 
 const BUDGET = 150;
-
-// Toggle for live demo: `node agent/client-agent.js fail` to show rejection
-const DEMO_MODE = process.argv[2] === "fail" ? "fail" : "pass";
 
 function selectFreelancer(freelancers) {
   const affordable = freelancers.filter(f => f.rate <= BUDGET);
@@ -77,7 +76,6 @@ async function run() {
 
   try {
     await client.connect();
-    console.log(`\n=== Running in "${DEMO_MODE}" mode ===\n`);
 
     const clientWallet = xrpl.Wallet.fromSeed(process.env.CLIENT_SEED);
     const freelancerWallet = xrpl.Wallet.fromSeed(process.env.FREELANCER_SEED);
@@ -92,11 +90,9 @@ async function run() {
     const sequence = await lockEscrow(client, clientWallet, freelancerWallet.address, chosen.rate.toString(), condition);
 
     // The actual toggle: swap which "delivered work" the freelancer submitted
-    const fileContent =
-      DEMO_MODE === "fail"
-        ? "<html><footer>copyright</footer><title>Test</title></html>" // missing <nav>
-        : "<html><nav>menu</nav><footer>copyright</footer><title>Test</title></html>";
-
+    const submissionPath = process.argv[2] || path.join(__dirname, "..", "samples", "good-submission.html");
+    console.log("→ Freelancer submitted file:", submissionPath);
+    const fileContent = fs.readFileSync(submissionPath, "utf8");
     const proofHash = await payForVerification(client, clientWallet, process.env.VERIFIER_ADDRESS, "0.5");
 
     console.log("Waiting for escrow window...");
